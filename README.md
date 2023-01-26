@@ -296,7 +296,9 @@ response\_5xx\_rps      | rps   | sum  | total responses number with 5xx code
 response\_[0-9]{3}\_rps | rps   | sum  | total responses number with given code
 upstream\_cache\_(miss\|bypass\|expired\|stale\|updating\|revalidated\|hit)\_rps | rps   | sum  | totar responses with a given upstream cache status
 lua\_time               | ms    | avg  | time spent on lua code
-worker\_connections     | things| max  | current number of used connections (see http://nginx.org/ru/docs/ngx_core_module.html#worker_connections)
+worker\_connections     | things| max  | current number of used connections\*
+
+\*the same value as in http://nginx.org/ru/docs/ngx_core_module.html#worker_connections
 
 Percentiles
 ===========
