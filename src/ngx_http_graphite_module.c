@@ -242,15 +242,15 @@ typedef struct ngx_http_graphite_aggregate_s {
     ngx_http_graphite_aggregate_pt get;
 } ngx_http_graphite_aggregate_t;
 
-#define AGGREGATE_COUNT 5
-
-static const ngx_http_graphite_aggregate_t ngx_http_graphite_aggregates[AGGREGATE_COUNT] = {
+static const ngx_http_graphite_aggregate_t ngx_http_graphite_aggregates[] = {
     { ngx_string("avg"), ngx_http_graphite_aggregate_avg },
     { ngx_string("persec"), ngx_http_graphite_aggregate_persec },
     { ngx_string("sum"), ngx_http_graphite_aggregate_sum },
     { ngx_string("gauge"), ngx_http_graphite_aggregate_gauge },
     { ngx_string("max"), ngx_http_graphite_aggregate_max },
 };
+
+#define AGGREGATE_COUNT ( sizeof(ngx_http_graphite_aggregates) / sizeof(ngx_http_graphite_aggregate_t) )
 
 struct ngx_http_graphite_source_s;
 typedef double (*ngx_http_graphite_source_handler_pt)(const struct ngx_http_graphite_source_s *source, ngx_http_request_t*);
@@ -285,6 +285,7 @@ static double ngx_http_graphite_source_upstream_connect_time(const ngx_http_grap
 static double ngx_http_graphite_source_upstream_header_time(const ngx_http_graphite_source_t *source, ngx_http_request_t *r);
 static double ngx_http_graphite_source_lua_time(const ngx_http_graphite_source_t *source, ngx_http_request_t *r);
 #endif
+static double ngx_http_graphite_source_worker_connections(const ngx_http_graphite_source_t *source, ngx_http_request_t *r);
 
 static const ngx_http_graphite_source_t ngx_http_graphite_sources[] = {
     { .name = ngx_string("request_time"), .get = ngx_http_graphite_source_request_time, .aggregate = ngx_http_graphite_aggregate_avg },
@@ -309,6 +310,7 @@ static const ngx_http_graphite_source_t ngx_http_graphite_sources[] = {
     { .name = ngx_string("upstream_header_time"), .get = ngx_http_graphite_source_upstream_header_time, .aggregate = ngx_http_graphite_aggregate_avg },
     { .name = ngx_string("lua_time"), .get = ngx_http_graphite_source_lua_time, .aggregate = ngx_http_graphite_aggregate_avg },
 #endif
+    { .name = ngx_string("worker_connections"), .get = ngx_http_graphite_source_worker_connections, .aggregate = ngx_http_graphite_aggregate_max },
 };
 
 const size_t SOURCE_COUNT = sizeof(ngx_http_graphite_sources) / sizeof(ngx_http_graphite_source_t);
@@ -3584,6 +3586,10 @@ ngx_http_graphite_source_lua_time(const ngx_http_graphite_source_t *source, ngx_
 }
 
 #endif
+
+static double ngx_http_graphite_source_worker_connections(const ngx_http_graphite_source_t *source, ngx_http_request_t *r) {
+    return ngx_cycle->connection_n - ngx_cycle->free_connection_n;
+}
 
 static double
 ngx_http_graphite_aggregate_avg(const ngx_http_graphite_interval_t *interval, const void *data) {
