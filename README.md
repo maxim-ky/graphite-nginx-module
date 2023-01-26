@@ -203,6 +203,7 @@ func   | Description
 sum    | sum of values per interval
 persec | sum of values per second  (`sum` divided on seconds in `interval`)
 avg    | average value on interval
+max    | maximum value on interval
 gauge  | gauge value
 
 Example: see below.

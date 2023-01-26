@@ -235,19 +235,21 @@ static double ngx_http_graphite_aggregate_avg(const ngx_http_graphite_interval_t
 static double ngx_http_graphite_aggregate_persec(const ngx_http_graphite_interval_t *interval, const void *data);
 static double ngx_http_graphite_aggregate_sum(const ngx_http_graphite_interval_t *interval, const void *data);
 static double ngx_http_graphite_aggregate_gauge(const ngx_http_graphite_interval_t *interval, const void *data);
+static double ngx_http_graphite_aggregate_max(const ngx_http_graphite_interval_t *interval, const void *data);
 
 typedef struct ngx_http_graphite_aggregate_s {
     ngx_str_t name;
     ngx_http_graphite_aggregate_pt get;
 } ngx_http_graphite_aggregate_t;
 
-#define AGGREGATE_COUNT 4
+#define AGGREGATE_COUNT 5
 
 static const ngx_http_graphite_aggregate_t ngx_http_graphite_aggregates[AGGREGATE_COUNT] = {
     { ngx_string("avg"), ngx_http_graphite_aggregate_avg },
     { ngx_string("persec"), ngx_http_graphite_aggregate_persec },
     { ngx_string("sum"), ngx_http_graphite_aggregate_sum },
     { ngx_string("gauge"), ngx_http_graphite_aggregate_gauge },
+    { ngx_string("max"), ngx_http_graphite_aggregate_max },
 };
 
 struct ngx_http_graphite_source_s;
@@ -1523,12 +1525,12 @@ ngx_http_graphite_parse_param_args(ngx_http_graphite_context_t *context, const n
 
     if (r == NGX_OK && (param->aggregate && param->aggregate != ngx_http_graphite_aggregate_gauge && !param->interval.value)) {
         r = NGX_ERROR;
-        ngx_log_error(NGX_LOG_ERR, context->log, 0, "graphite param must contain interval with aggregate avg, persec or sum");
+        ngx_log_error(NGX_LOG_ERR, context->log, 0, "graphite param must contain interval with aggregate avg, persec, max or sum");
     }
 
     if (r == NGX_OK && ((!param->aggregate || param->aggregate == ngx_http_graphite_aggregate_gauge) && param->interval.value)) {
         r = NGX_ERROR;
-        ngx_log_error(NGX_LOG_ERR, context->log, 0, "graphite param must contain aggregate avg, persec or sum with interval or aggregate gauge");
+        ngx_log_error(NGX_LOG_ERR, context->log, 0, "graphite param must contain aggregate avg, persec, max or sum with interval or aggregate gauge");
     }
 
     if (r == NGX_OK && (param->aggregate == ngx_http_graphite_aggregate_gauge && param->percentiles->nelts != 0)) {
@@ -1538,7 +1540,7 @@ ngx_http_graphite_parse_param_args(ngx_http_graphite_context_t *context, const n
 
     if (r == NGX_OK && (!param->aggregate && !param->interval.value && param->percentiles->nelts == 0)) {
         r = NGX_ERROR;
-        ngx_log_error(NGX_LOG_ERR, context->log, 0, "graphite param must contain aggregate avg, perse or sum and interval, aggregate gauge or percentile");
+        ngx_log_error(NGX_LOG_ERR, context->log, 0, "graphite param must contain aggregate avg, persec, max or sum and interval, aggregate gauge or percentile");
     }
 
     if (r == NGX_OK && (param->interval.value > context->storage->max_interval)) {
@@ -2562,13 +2564,25 @@ ngx_http_graphite_get_sources_values(ngx_http_graphite_main_conf_t *gmcf, ngx_ht
 }
 
 static void
-ngx_http_graphite_add_metric(ngx_http_request_t *r, ngx_http_graphite_storage_t *storage, ngx_http_graphite_metric_t *metric, time_t ts, double value) {
+ngx_http_graphite_accum_metric_value(ngx_http_graphite_metric_data_t *accum, const ngx_http_graphite_metric_data_t *new_value, ngx_http_graphite_aggregate_pt aggregate) {
+    if (aggregate == ngx_http_graphite_aggregate_max) {
+        if (new_value->value > accum->value)
+            accum->value = new_value->value;
+    }
+    else {
+        accum->value += new_value->value;
+        accum->count += new_value->count;
+    }
+}
+
+static void
+ngx_http_graphite_add_metric(ngx_http_request_t *r, ngx_http_graphite_storage_t *storage, ngx_http_graphite_metric_t *metric, ngx_http_graphite_aggregate_pt aggregate, time_t ts, double value) {
 
     ngx_uint_t a = ((ts - storage->start_time) % (storage->max_interval + 1));
     ngx_http_graphite_metric_data_t *data = &metric->data[a];
 
-    data->count++;
-    data->value += value;
+    ngx_http_graphite_metric_data_t new_value = {value, 1};
+    ngx_http_graphite_accum_metric_value(data, &new_value, aggregate);
 }
 
 static void
@@ -2651,7 +2665,7 @@ ngx_http_graphite_add_data_values(ngx_http_request_t *r, ngx_http_graphite_stora
         ngx_http_graphite_metric_t *metric = &((ngx_http_graphite_metric_t*)storage->metrics->elts)[m];
         ngx_http_graphite_param_t *param = &((ngx_http_graphite_param_t*)storage->params->elts)[metric->param];
         double value = (param->source != SOURCE_INTERNAL) ? values[param->source] : values[0];
-        ngx_http_graphite_add_metric(r, storage, metric, ts, value);
+        ngx_http_graphite_add_metric(r, storage, metric, param->aggregate, ts, value);
     }
 
     for (i = 0; i < data->gauges->nelts; i++) {
@@ -3056,8 +3070,7 @@ ngx_http_graphite_print_metric(ngx_http_graphite_main_conf_t *gmcf, ngx_http_gra
         if ((time_t)(ts - l - 1) >= storage->start_time) {
             ngx_uint_t a = ((ts - l - 1 - storage->start_time) % (storage->max_interval + 1));
             ngx_http_graphite_metric_data_t *data = &metric->data[a];
-            aggregate.value += data->value;
-            aggregate.count += data->count;
+            ngx_http_graphite_accum_metric_value(&aggregate, data, param->aggregate);
         }
     }
 
@@ -3598,4 +3611,11 @@ ngx_http_graphite_aggregate_gauge(const ngx_http_graphite_interval_t *interval, 
 
     ngx_http_graphite_gauge_data_t *gauge_data = (ngx_http_graphite_gauge_data_t*)data;
     return gauge_data->value;
+}
+
+static double
+ngx_http_graphite_aggregate_max(const ngx_http_graphite_interval_t *interval, const void *data) {
+
+    ngx_http_graphite_metric_data_t *metric_data = (ngx_http_graphite_metric_data_t*)data;
+    return metric_data->value;
 }
